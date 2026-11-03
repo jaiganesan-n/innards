@@ -14,6 +14,10 @@
   <img alt="Runs on a MacBook Air M5 (MPS), 16 GB" src="https://img.shields.io/badge/runs%20on-MacBook%20Air%20M5%20(MPS)%2C%2016%20GB-555555?style=flat-square&logo=apple&logoColor=white">
 </p>
 
+<p align="center">
+  <img alt="Granite 3.1 1B-A400M runs unchanged; Innards reads which experts each token chose in every MoE layer and counts them per topic" src="docs/figures/banner_light.png" width="100%">
+</p>
+
 Measuring and analysis code for one question: **which experts of a Mixture-of-Experts model does a token, a topic or a task actually use, measured while the model runs and without changing what it computes?** Your code loads the original checkpoint and runs it, for inference or for training; Innards attaches read-only hooks to that model and analyzes what they see beside it. For every model, MoE or not, it also records tokens, context, KV cache, memory and timing, and serves a live web view from the same machine. It targets models that run on a 16 GB machine at 16-bit precision or higher, through Hugging Face Transformers 5.
 
 > [!NOTE]
@@ -98,7 +102,7 @@ trace.close()  # removes the hooks and writes innards_runs/topic-experts/experts
 
 ### 2.2 During training
 
-Give one topic per sequence of the batch. Padding is never counted, and the forward that gradient checkpointing recomputes inside `backward()` is not counted twice.
+Give one topic per sequence of the batch. Padding is never counted, and the forward that gradient checkpointing recomputes inside `backward()` is not counted twice. The example fine-tunes only the routers, to stay light; the trace works the same when every weight trains.
 
 <!-- test: requires=hf,network -->
 ```python
@@ -110,7 +114,11 @@ import innards
 model_id = "ibm-granite/granite-3.1-1b-a400m-instruct"
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16).train()
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-5)
+model.requires_grad_(False)
+routers = [m for name, m in model.named_modules() if name.endswith(".router")]
+for router in routers:
+    router.requires_grad_(True)
+optimizer = torch.optim.SGD([p for r in routers for p in r.parameters()], lr=1e-5)
 
 trace = innards.experts.trace(model, tokenizer, run="finetune", tokens=False)  # counts only: light for long runs
 batch = tokenizer(
@@ -311,6 +319,7 @@ uv sync --all-extras                                    # Python 3.13, torch, tr
 uv run pytest                                           # unit tests, README examples, small real checkpoints
 uv run ruff check && uv run ruff format --check && uv run mypy src
 INNARDS_REMOTE_CODE_TESTS=1 uv run pytest tests/test_experts_models.py -k mobilemoe   # facebook/MobileMoE (remote code)
+uv run --with playwright python docs/figures/src/make_banner.py --measure           # re-trace Granite, redraw the banner
 ```
 
 ### Repository layout
@@ -331,6 +340,7 @@ innards/
 │   └── cli.py       # innards <command>
 ├── tests/           replicas.py (tiny random-weight models), test_*.py
 ├── scripts/         overhead_bench.py
+├── docs/figures/    banner_light.png, banner_data.json (what the banner shows), src/make_banner.py
 └── .github/workflows/  ci.yml, publish.yml (PyPI on a v* tag)
 ```
 

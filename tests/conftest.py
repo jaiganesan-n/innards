@@ -11,6 +11,7 @@ Markers:
 from __future__ import annotations
 
 import functools
+import gc
 import importlib.util
 import json
 import os
@@ -60,6 +61,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             item.add_marker(pytest.mark.skip(reason="needs the [view] extra (fastapi, uvicorn)"))
         if "network" in item.keywords and not require_network and not hub_reachable():
             item.add_marker(pytest.mark.skip(reason="Hugging Face Hub is unreachable"))
+
+
+@pytest.fixture(autouse=True)
+def _release_models(request: pytest.FixtureRequest) -> Any:
+    """Free a real checkpoint as soon as its test ends: hooks hold reference cycles, and CI runners
+    have little memory left for the README examples, which load their own models in a subprocess."""
+    yield
+    if "network" in request.keywords:
+        gc.collect()
 
 
 @pytest.fixture
