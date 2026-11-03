@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local runs
+runs/
+innards_runs/
+bench-results/
+
+# macOS
+.DS_Store
+
+
+Claude outputs
+
+# Local work log (what was done, kept on this machine)
+LOG.md

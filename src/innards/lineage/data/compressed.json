@@ -1,0 +1,18 @@
+{
+  "family": "compressed",
+  "name": "Compressed attention (CSA + HCA)",
+  "predecessor": "dsa",
+  "change": "Every layer keeps a short sliding window of one shared K=V vector per token. Compressed sparse attention (CSA) layers also pool every 4 tokens into one compressed entry and pick among them with a lightning indexer; heavily compressed attention (HCA) layers pool every 128 tokens into one entry and attend to all of them.",
+  "problem_solved": "Even a latent cache grows linearly with context. Compressing old tokens into pooled entries cuts the cache at 1M tokens to about a tenth of DeepSeek-V3.2's.",
+  "trade_off": "Distant tokens are only visible through pooled entries, so exact recall of a far token depends on the compressor and the indexer; the engine keeps small buffers of tokens waiting to fill a window.",
+  "kv_formula": "L × min(T, W−1) × d × b + Σ_CSA ⌊T/4⌋ × (d + d_index) × b + Σ_HCA ⌊T/128⌋ × d × b",
+  "reference": {
+    "title": "DeepSeek-V4: Towards Highly Efficient Million-Token Context Intelligence",
+    "authors": "DeepSeek-AI",
+    "year": 2026,
+    "url": "https://arxiv.org/abs/2606.19348"
+  },
+  "examples": [
+    "deepseek-ai/DeepSeek-V4-Flash"
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "description": "The lineup: newer models with a new architectural feature, and the version before each. Every model runs on a local machine with 16 GB at 16-bit precision. Original checkpoints only, at the precision their vendor published.",
+  "pairs": [
+    {
+      "id": "qwen-deltanet",
+      "feature": "Gated DeltaNet + gated attention",
+      "features": [
+        "gated_deltanet",
+        "gated_attention"
+      ],
+      "newer": "Qwen/Qwen3.5-0.8B",
+      "previous": "Qwen/Qwen3-0.6B",
+      "alternates": [
+        {
+          "newer": "Qwen/Qwen3.5-2B",
+          "previous": "Qwen/Qwen3-1.7B"
+        }
+      ],
+      "where": "local",
+      "change": "Full attention on all 28 layers (GQA, 8 KV heads) becomes a hybrid: 18 Gated DeltaNet layers that keep a fixed-size memory instead of a growing cache, and 6 full-attention layers with 2 KV heads and a sigmoid gate on their output."
+    },
+    {
+      "id": "granite-moe",
+      "feature": "MoE with a shared expert + sliding-window attention",
+      "features": [
+        "moe"
+      ],
+      "newer": "ibm-granite/granite-swash-3b-a600m",
+      "previous": "ibm-granite/granite-3.1-3b-a800m-instruct",
+      "alternates": [],
+      "where": "local",
+      "change": "Both route every token through a sparse MoE. Granite 3.1 3B-A800M sends each token to 8 of 40 experts on all 32 full-attention layers (GQA, 8 KV heads). Granite Swash 3B-A600M sends it to 4 of 48 experts plus an always-on shared expert, and 20 of its 28 layers attend over a 128-token sliding window with 4 KV heads, so its cache stops growing on those layers."
+    }
+  ],
+  "models": {
+    "Qwen/Qwen3.5-0.8B": {
+      "config": "Qwen__Qwen3.5-0.8B.json",
+      "vendor": "qwen",
+      "weights_gb": 1.7,
+      "precision": "bf16",
+      "params": 873438784
+    },
+    "Qwen/Qwen3-0.6B": {
+      "config": "Qwen__Qwen3-0.6B.json",
+      "vendor": "qwen",
+      "weights_gb": 1.5,
+      "precision": "bf16",
+      "params": 751632384
+    },
+    "Qwen/Qwen3.5-2B": {
+      "config": "Qwen__Qwen3.5-2B.json",
+      "vendor": "qwen",
+      "weights_gb": 4.5,
+      "precision": "bf16",
+      "params": 2274069824
+    },
+    "Qwen/Qwen3-1.7B": {
+      "config": "Qwen__Qwen3-1.7B.json",
+      "vendor": "qwen",
+      "weights_gb": 4.1,
+      "precision": "bf16",
+      "params": 2031739904
+    },
+    "ibm-granite/granite-swash-3b-a600m": {
+      "config": "ibm-granite__granite-swash-3b-a600m.json",
+      "vendor": "ibm-granite",
+      "weights_gb": 6.0,
+      "precision": "bf16",
+      "params": 3020382000
+    },
+    "ibm-granite/granite-3.1-3b-a800m-instruct": {
+      "config": "ibm-granite__granite-3.1-3b-a800m-instruct.json",
+      "vendor": "ibm-granite",
+      "weights_gb": 6.6,
+      "precision": "bf16",
+      "params": 3298793472
+    }
+  }
+}

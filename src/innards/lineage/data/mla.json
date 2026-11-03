@@ -1,0 +1,18 @@
+{
+  "family": "mla",
+  "name": "Multi-head latent attention",
+  "predecessor": "gqa",
+  "change": "Keys and values are compressed into one low-rank latent per token, plus a small decoupled RoPE key; per-head K/V are reconstructed from the latent.",
+  "problem_solved": "KV was still large at long context. Caching a latent of d_c + d_rope elements per layer is far smaller than per-head K/V, without dropping heads.",
+  "trade_off": "Extra projection compute and a decoupled RoPE path. Engines that cache the decompressed K/V lose the memory benefit.",
+  "kv_formula": "L × (d_c + d_rope) × b per token",
+  "reference": {
+    "title": "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model",
+    "authors": "DeepSeek-AI",
+    "year": 2024,
+    "url": "https://arxiv.org/abs/2405.04434"
+  },
+  "examples": [
+    "deepseek-ai/DeepSeek-V2-Lite"
+  ]
+}

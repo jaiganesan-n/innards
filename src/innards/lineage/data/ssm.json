@@ -1,0 +1,18 @@
+{
+  "family": "ssm",
+  "name": "State-space model (no attention)",
+  "predecessor": "mha",
+  "change": "Attention is replaced entirely by a selective state-space recurrence; there is no KV cache, only a fixed-size state per layer.",
+  "problem_solved": "Memory and per-token compute no longer grow with context length.",
+  "trade_off": "No exact lookup of earlier tokens; recall must fit in the state.",
+  "kv_formula": "0 bytes per token; fixed state per layer",
+  "reference": {
+    "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+    "authors": "Gu and Dao",
+    "year": 2023,
+    "url": "https://arxiv.org/abs/2312.00752"
+  },
+  "examples": [
+    "state-spaces/mamba-130m-hf"
+  ]
+}

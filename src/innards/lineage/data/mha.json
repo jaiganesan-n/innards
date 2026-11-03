@@ -1,0 +1,19 @@
+{
+  "family": "mha",
+  "name": "Multi-head attention",
+  "predecessor": null,
+  "change": "Every query head has its own key and value head, so the cache stores K and V for all heads in every layer.",
+  "problem_solved": "Lets each head attend to different positions and relations in parallel, replacing recurrence with attention over the whole context.",
+  "trade_off": "KV cache grows with layers x heads x head_dim per token; decoding becomes memory-bandwidth bound at long context.",
+  "kv_formula": "2 × L × H × d_head × b per token",
+  "reference": {
+    "title": "Attention Is All You Need",
+    "authors": "Vaswani et al.",
+    "year": 2017,
+    "url": "https://arxiv.org/abs/1706.03762"
+  },
+  "examples": [
+    "openai-community/gpt2",
+    "microsoft/Phi-3-mini-4k-instruct"
+  ]
+}

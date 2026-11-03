@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>innards</title>
+  <meta name="description" content="What happens inside an open-weight model while it runs: KV cache, context, memory, timing, each architectural feature at work, and which MoE experts each token and topic activates.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M8 22V10m5 12V14m5 8v-6m5 6V8' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/vendor/plotly-4.1.1.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo" aria-hidden="true"></span><span class="brand-name">innards</span></div>
+    <form id="load-form" class="load" autocomplete="off">
+      <label class="sr-only" for="model-input">Model</label>
+      <input id="model-input" list="model-list" spellcheck="false" placeholder="Qwen/Qwen3.5-0.8B or a local folder">
+      <datalist id="model-list"></datalist>
+      <label class="sr-only" for="precision">Precision</label>
+      <select id="precision" title="Original checkpoints run at the precision their vendor published">
+        <option value="auto">Published</option>
+        <option value="bf16">BF16</option>
+        <option value="fp16">FP16</option>
+        <option value="fp32">FP32</option>
+      </select>
+      <button id="check-btn" type="button" class="ghost">Check</button>
+      <button id="load-btn" type="submit" class="primary">Load</button>
+      <span id="fit-pill" class="pill" hidden></span>
+    </form>
+    <div class="top-right">
+      <span id="live" class="live idle" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="live-text">Idle</span></span>
+      <div class="gauge" id="gauge" title="Memory in use against the budget">
+        <span class="gauge-label" id="gauge-label">GPU</span>
+        <span class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" id="gauge-meter"><span class="fill" id="gauge-fill"></span></span>
+        <span class="gauge-value mono" id="gauge-value">n/a</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside class="sidebar" aria-label="Monitoring now">
+      <section>
+        <h2>Monitoring now</h2>
+        <ul class="monitor" id="monitor"></ul>
+      </section>
+      <section>
+        <h2>Features</h2>
+        <ul class="features" id="features"><li class="muted">No model yet</li></ul>
+      </section>
+      <section>
+        <h2>Health</h2>
+        <div id="health" class="health muted">No turns yet</div>
+      </section>
+      <section class="runs-section">
+        <h2>Runs</h2>
+        <ul class="runs" id="runs"></ul>
+      </section>
+      <p class="side-foot"><span id="store-url" class="mono"></span></p>
+    </aside>
+
+    <main id="main">
+      <nav class="tabs" role="tablist" aria-label="Views">
+        <button role="tab" data-tab="conversation" aria-selected="true">Conversation</button>
+        <button role="tab" data-tab="analysis" aria-selected="false">Analysis</button>
+        <button role="tab" data-tab="experts" aria-selected="false">Experts</button>
+        <span class="tab-spacer"></span>
+        <span id="mode-note" class="muted small"></span>
+      </nav>
+      <div id="banner" class="banner" role="alert" hidden></div>
+
+      <!-- ======================================================== conversation -->
+      <section id="tab-conversation" role="tabpanel" data-panel="conversation">
+        <div id="checks" class="panel checks" hidden></div>
+        <div class="toolbar">
+          <label class="field-inline">Set
+            <select id="set-select"></select>
+          </label>
+          <input id="doc-input" type="file" accept=".txt,.md,.markdown,.pdf" hidden>
+          <button id="doc-btn" type="button" class="ghost" hidden>Choose document…</button>
+          <span id="doc-note" class="muted small"></span>
+          <button id="run-set" type="button">Run set</button>
+          <button id="new-conv" type="button" class="ghost">New conversation</button>
+          <span class="tool-spacer"></span>
+          <label class="field-inline" id="viewing-wrap" hidden>Viewing
+            <select id="viewing"></select>
+          </label>
+        </div>
+        <p id="set-note" class="muted small set-note"></p>
+        <div class="panel chat">
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <form id="composer" class="composer" autocomplete="off">
+            <textarea id="message" rows="2" placeholder="Load a model to start" aria-label="Message" disabled></textarea>
+            <div class="composer-actions">
+              <span id="composer-status" class="muted small" aria-live="polite"></span>
+              <button id="stop-btn" type="button" hidden>Stop</button>
+              <button id="send-btn" type="submit" class="primary" disabled>Send</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ======================================================== analysis -->
+      <section id="tab-analysis" role="tabpanel" data-panel="analysis" hidden>
+        <div class="toolbar filters">
+          <label class="field-inline grow">Conversation <select id="an-conv"></select></label>
+          <label class="field-inline grow">Compare with <select id="an-compare"></select></label>
+          <label class="field-inline">Turns <input id="an-first" type="number" min="1" step="1" placeholder="1"> – <input id="an-last" type="number" min="1" step="1" placeholder="last"></label>
+        </div>
+        <div id="an-head" class="an-head"></div>
+        <div id="tiles" class="tiles"></div>
+        <div id="an-grid" class="grid"></div>
+      </section>
+
+      <!-- ======================================================== experts -->
+      <section id="tab-experts" role="tabpanel" data-panel="experts" hidden>
+        <div class="toolbar filters">
+          <label class="field-inline grow">Trace <select id="ex-trace"></select></label>
+          <label class="field-inline">Topic <select id="ex-topic"></select></label>
+          <label class="field-inline">Measure
+            <select id="ex-by">
+              <option value="selection">Selection</option>
+              <option value="gate">Gate share</option>
+              <option value="lift">Lift</option>
+            </select>
+          </label>
+          <label class="field-inline">Layer <select id="ex-layer"></select></label>
+          <label class="field-inline">Coverage <input id="ex-coverage" type="number" min="0.05" max="1" step="0.05" value="0.9"></label>
+          <button id="ex-download" type="button" class="ghost">Download expert set</button>
+        </div>
+        <div id="ex-grid" class="grid"></div>
+        <div id="ex-tokens" class="grid"></div>
+      </section>
+    </main>
+  </div>
+  <div id="tooltip" class="sr-only" aria-live="polite"></div>
+</body>
+</html>

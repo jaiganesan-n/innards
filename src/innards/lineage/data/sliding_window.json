@@ -1,0 +1,19 @@
+{
+  "family": "sliding_window",
+  "name": "Sliding-window (local) attention, often interleaved with global layers",
+  "predecessor": "gqa",
+  "change": "Local layers attend only to the last W tokens, so their cache stops growing at W - 1 resident tokens; a few global layers keep full attention.",
+  "problem_solved": "With full attention, KV grows in every layer for every token. Capping most layers makes long-context memory grow only in the global layers.",
+  "trade_off": "Local layers forget beyond the window; long-range recall depends on the global layers.",
+  "kv_formula": "global: 2 × L_global × H_kv × d_head × b per token; local: capped at (W - 1) tokens",
+  "reference": {
+    "title": "Mistral 7B",
+    "authors": "Jiang et al.",
+    "year": 2023,
+    "url": "https://arxiv.org/abs/2310.06825"
+  },
+  "examples": [
+    "google/gemma-3-1b-it",
+    "openai/gpt-oss-20b"
+  ]
+}

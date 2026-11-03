@@ -1,0 +1,18 @@
+{
+  "family": "dsa",
+  "name": "DeepSeek Sparse Attention (MLA + lightning indexer)",
+  "predecessor": "mla",
+  "change": "A small lightning indexer scores every earlier token for each query and keeps only the top-k; attention then runs on those tokens alone. The MLA latent cache stays, and each layer also caches one indexer key per token.",
+  "problem_solved": "Attention cost grew with the full context on every decoding step. Selecting a fixed number of tokens makes the core attention cost roughly constant per token at long context.",
+  "trade_off": "The cache grows slightly (one indexer key per token per layer), and a token the indexer does not select is invisible to that query.",
+  "kv_formula": "L × (d_c + d_rope + d_index) × b per token",
+  "reference": {
+    "title": "DeepSeek-V3.2: Pushing the Frontier of Open Large Language Models",
+    "authors": "DeepSeek-AI",
+    "year": 2025,
+    "url": "https://arxiv.org/abs/2512.02556"
+  },
+  "examples": [
+    "deepseek-ai/DeepSeek-V3.2"
+  ]
+}

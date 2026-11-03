@@ -1,0 +1,42 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write  # PyPI Trusted Publishing (OIDC); no API token needed
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: false
+
+      - name: Tag matches the package version
+        shell: bash
+        run: |
+          version="$(uv version --short)"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pyproject version $version"
+            exit 1
+          fi
+
+      - name: Build
+        run: uv build
+
+      - name: Check distributions
+        run: uvx twine check --strict dist/*
+
+      - name: Smoke-test the wheel in a fresh environment
+        run: uv run --isolated --no-project --with dist/*.whl python -c "from innards import observe, experts; print('ok')"
+
+      - name: Publish
+        run: uv publish --trusted-publishing always

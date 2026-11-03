@@ -1,0 +1,20 @@
+{
+  "family": "hybrid",
+  "name": "Hybrid (state-space or linear attention + attention)",
+  "predecessor": "gqa",
+  "change": "Most layers are replaced by recurrent blocks (Mamba, linear attention, short convolutions) with a fixed-size state; only a few attention layers keep a KV cache.",
+  "problem_solved": "KV and attention cost grow with context length. Recurrent layers keep constant memory per sequence, so only the attention layers grow.",
+  "trade_off": "A fixed-size state can lose exact recall of distant tokens; engines differ in how they store and count the state.",
+  "kv_formula": "attention layers only: 2 × L_attn × H_kv × d_head × b per token, plus fixed recurrent state",
+  "reference": {
+    "title": "Jamba: A Hybrid Transformer-Mamba Language Model",
+    "authors": "Lieber et al.",
+    "year": 2024,
+    "url": "https://arxiv.org/abs/2403.19887"
+  },
+  "examples": [
+    "ibm-granite/granite-4.0-h-tiny",
+    "LiquidAI/LFM2-350M",
+    "Qwen/Qwen3-Next-80B-A3B-Instruct"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "family": "fp8_kv",
+  "name": "FP8 KV cache",
+  "predecessor": null,
+  "change": "Keys and values are stored in 8-bit floating point instead of fp16/bf16. Applies on top of any attention family.",
+  "problem_solved": "Halves bytes per element, so the same memory holds twice the context.",
+  "trade_off": "Possible accuracy loss from quantization; needs engine and hardware support.",
+  "kv_formula": "b = 1 instead of 2",
+  "reference": {
+    "title": "FP8 Formats for Deep Learning",
+    "authors": "Micikevicius et al.",
+    "year": 2022,
+    "url": "https://arxiv.org/abs/2209.05433"
+  },
+  "examples": []
+}

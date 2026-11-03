@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON_PREFERENCE: only-managed  # uv-managed Pythons on every job
+  UV_NO_PROGRESS: "1"
+  FORCE_COLOR: "1"
+
+jobs:
+  lint:
+    name: ruff + mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          prune-cache: true
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy src
+
+  test:
+    name: test (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # "3.15" resolves to the latest 3.15 release candidate until the final
+        # release (1 October 2026), then to 3.15.0 with no change here.
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
+    env:
+      INNARDS_REQUIRE_NETWORK: "1"  # a missing Hub fails the network tests instead of skipping them
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}  # optional; avoids anonymous Hub rate limits
+      HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+          prune-cache: true  # keep the Actions cache small; PyPI wheels re-download fast
+          cache-suffix: py${{ matrix.python }}
+
+      - name: Install Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }} && uv run --no-project python -VV
+
+      - name: Sync (core + every extra where wheels exist)
+        id: sync
+        shell: bash
+        run: |
+          if uv sync --locked --all-extras 2> sync.log; then
+            echo "hf=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ matrix.python }}" = "3.15" ]; then
+            cat sync.log
+            echo "::warning::Some extras have no wheels for Python 3.15 yet (PyTorch, pydantic-core); running core tests, the rest skip."
+            uv sync --locked
+            echo "hf=false" >> "$GITHUB_OUTPUT"
+          else
+            cat sync.log
+            exit 1
+          fi
+
+      - name: Cache Hugging Face models
+        if: steps.sync.outputs.hf == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-hub-gpt2-qwen3-gemma3-lfm2-qwen3.5-granite-moe-v4
+          restore-keys: hf-hub-
+
+      - name: Tests
+        run: uv run pytest
+
+  package:
+    name: build + fresh install (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.15"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv build
+      - run: uvx twine check --strict dist/*
+      - name: Install the wheel into a fresh uv project
+        shell: bash
+        run: |
+          wheel="$(ls "$PWD"/dist/*.whl)"
+          mkdir -p "$RUNNER_TEMP/fresh" && cd "$RUNNER_TEMP/fresh"
+          uv init --bare --no-workspace --python "${{ matrix.python }}" .
+          uv add "$wheel"
+          uv run python -c "from innards import observe, Watch, mHC, GatedDeltaNet, experts; from innards.experts import ExpertMap, trace; from innards.kv import predict; from innards.lineage import explain; from innards.schema import TurnRecord; from innards.sets import SETS; print('ok')"
+          uv run innards predict --model "$GITHUB_WORKSPACE/tests/fixtures/configs/deepseek-v4-flash.json" --context 131072 --kv-dtype bf16
+          uv run innards experts "$RUNNER_TEMP/fresh"
+          uv run innards explain mla
+          uv run innards lineup
+          test -f "$(uv run python -c 'import innards.view, pathlib; print(pathlib.Path(innards.view.__file__).parent / "static" / "app.js")')"

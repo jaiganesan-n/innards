@@ -1,0 +1,19 @@
+{
+  "family": "mqa",
+  "name": "Multi-query attention",
+  "predecessor": "mha",
+  "change": "All query heads share a single key and value head.",
+  "problem_solved": "Cuts KV bytes per token by the number of heads, which speeds up memory-bound decoding.",
+  "trade_off": "One K/V head for all queries can lose quality and make training less stable; GQA was introduced as a middle ground.",
+  "kv_formula": "2 × L × 1 × d_head × b per token",
+  "reference": {
+    "title": "Fast Transformer Decoding: One Write-Head is All You Need",
+    "authors": "Shazeer",
+    "year": 2019,
+    "url": "https://arxiv.org/abs/1911.02150"
+  },
+  "examples": [
+    "bigcode/gpt_bigcode-santacoder",
+    "tiiuae/falcon-7b"
+  ]
+}
