@@ -219,9 +219,11 @@ class ExpertTrace:
             for slot in range(len(self.layers)):
                 counts, gates, seen = self._counts[slot], self._gates[slot], self._seen[slot]
                 rows, width = min(topics, counts.shape[0]), counts.shape[1]
-                self.totals["counts"][:rows, slot, :width] += counts[:rows].to("cpu", torch.float64)
-                self.totals["gates"][:rows, slot, :width] += gates[:rows].to("cpu", torch.float64)
-                self.totals["tokens"][:rows, slot] += seen[:rows].to("cpu", torch.float64)
+                # copy to the CPU first, then widen: on MPS, a row slice moved with .to("cpu", float64)
+                # in one call arrives as zeros (torch 2.14)
+                self.totals["counts"][:rows, slot, :width] += counts[:rows].cpu().to(torch.float64)
+                self.totals["gates"][:rows, slot, :width] += gates[:rows].cpu().to(torch.float64)
+                self.totals["tokens"][:rows, slot] += seen[:rows].cpu().to(torch.float64)
                 counts.zero_()
                 gates.zero_()
                 seen.zero_()

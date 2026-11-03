@@ -8,6 +8,7 @@ PyPI) that declares what it needs:
 * ``check-output``: every ``print(...)  # value`` comment must appear in the output.
 * ``cli``: each ``innards ...`` line runs as a command.
 * ``install``: pip/uv install lines; the CI wheel-install job runs these in a fresh environment.
+* ``dev``: commands for working on Innards from a clone (uv sync, pytest); CI runs the same steps.
 """
 
 from __future__ import annotations
@@ -72,7 +73,7 @@ def test_every_block_is_accounted_for() -> None:
     assert langs <= {"python", "bash", "text"}, langs
     for e in ALL:
         if e.lang == "bash":
-            assert {"cli", "install"} & set(e.meta.split()), f"README line {e.line}: bash block without a test tag"
+            assert {"cli", "install", "dev"} & set(e.meta.split()), f"README line {e.line}: bash block without a tag"
 
 
 @pytest.mark.parametrize("example", PYTHON, ids=[e.id for e in PYTHON])

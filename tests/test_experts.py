@@ -103,6 +103,31 @@ def test_counts_equal_what_the_experts_received(tmp_path: Path) -> None:
 
 
 @pytest.mark.hf
+@pytest.mark.parametrize("device", ["cpu", "mps", "cuda"])
+def test_counts_reach_the_totals_on_every_device(device: str, tmp_path: Path) -> None:
+    import torch
+
+    import innards
+
+    if device == "mps" and not torch.backends.mps.is_available():
+        pytest.skip("no Apple GPU")
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("no CUDA GPU")
+    model = moe_replica("granitemoe").to(device)
+    inputs = {k: v.to(device) for k, v in batch(["the cache grows with context"]).items()}
+    reference = reference_routing(model, inputs)
+    with innards.experts.trace(model, tokenizer(), run="r", root=str(tmp_path)) as trace:
+        with trace.topic("cache"), torch.no_grad():
+            model(**inputs)
+        trace.flush()
+        experts = trace.map()
+    for li, moe in enumerate(trace.layers):
+        index, _ = reference[moe.experts_module]
+        assert experts.counts("cache")[li] == torch.bincount(index.reshape(-1).cpu(), minlength=moe.experts).tolist()
+        assert experts.tokens("cache", moe.layer) == index.shape[0]
+
+
+@pytest.mark.hf
 def test_inline_routing_is_read_from_the_blocks_own_topk(tmp_path: Path) -> None:
     """MobileMoE-style blocks never call their router or experts: the ``topk`` source reads them."""
     import torch
