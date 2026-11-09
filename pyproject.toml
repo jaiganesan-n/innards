@@ -1,6 +1,6 @@
 [project]
 name = "innards"
-version = "0.0.1"
+version = "0.0.2"
 description = "See inside open-weight models while they run on your machine: read-only hooks on the model you loaded; for MoE models, which experts each token and topic activates during inference and training, and the expert set a topic needs; one analyzer per architectural feature; KV and memory predicted vs measured; a live web view."
 readme = "README.md"
 requires-python = ">=3.10"

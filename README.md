@@ -6,7 +6,7 @@
   <a href="https://www.linkedin.com/in/jaiganesan-n/"><img alt="LinkedIn: jaiganesan-n" src="https://img.shields.io/badge/LinkedIn-jaiganesan--n-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white"></a>
 </p>
 <p align="center">
-  <img alt="Version 0.0.1" src="https://img.shields.io/badge/version-0.0.1-555555?style=flat-square">
+  <img alt="Version 0.0.2" src="https://img.shields.io/badge/version-0.0.2-555555?style=flat-square">
   <img alt="Code license: Apache 2.0" src="https://img.shields.io/badge/code-Apache%202.0-blue?style=flat-square">
   <img alt="Python 3.10 to 3.15" src="https://img.shields.io/badge/Python-3.10%20to%203.15-3776AB?style=flat-square&logo=python&logoColor=white">
   <img alt="PyTorch 2.4 or later" src="https://img.shields.io/badge/PyTorch-2.4%2B-EE4C2C?style=flat-square&logo=pytorch&logoColor=white">
