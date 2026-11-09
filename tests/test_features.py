@@ -71,7 +71,6 @@ def test_gap_explanations() -> None:
 def test_conversation_sections_are_json_charts(kind: str, tmp_path: Path) -> None:
     import innards
     from innards.store import RunStore
-    from innards.view.analysis import analysis
     from replicas import chat_ids, replica, tokenizer
 
     model = replica(kind)
@@ -83,10 +82,16 @@ def test_conversation_sections_are_json_charts(kind: str, tmp_path: Path) -> Non
         history.append({"role": "assistant", "content": tokenizer().decode(out[0, -4:], skip_special_tokens=True)})
     conversation = watch.conversation
     watch.close()
-    data = analysis(RunStore(tmp_path), "r", conversation)
-    assert data["sections"]
-    for section in data["sections"]:
+    store = RunStore(tmp_path)
+    record = store.read_conversation("r", conversation)
+    assert record is not None
+    info = {**(record.get("model") or {}), "config": record.get("config") or {}}
+    turns = store.turns("r", conversation)
+    names = sorted({n for t in turns for n in t["features"]})
+    sections = [s for s in (get(name).conversation(turns, info, None) for name in names) if s]
+    assert sections
+    for section in sections:
         assert section["findings"], section["id"]
         for chart in section["charts"]:
             assert chart["type"] in {"line", "bar", "heatmap"}
-    json.dumps(data)
+    json.dumps(sections)

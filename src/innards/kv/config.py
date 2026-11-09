@@ -74,6 +74,19 @@ _NESTED_TEXT_KEYS = ("text_config", "language_config", "llm_config")
 # --------------------------------------------------------------------------- loading
 
 
+def _expands_v32() -> bool:
+    """transformers before 5.18 caches DeepSeek-V3.2's decompressed K/V; 5.18 and later cache the latent."""
+    try:
+        import transformers
+    except ImportError:
+        return False
+    try:
+        major, minor = (int(x) for x in transformers.__version__.split(".")[:2])
+    except ValueError:
+        return False
+    return (major, minor) < (5, 18)
+
+
 def load_config(
     model_or_config: ConfigSource | Any,
     *,
@@ -602,10 +615,10 @@ def spec_from_config(config: Mapping[str, Any], model_id: str | None = None) -> 
             f"DeepSeek Sparse Attention: every attention layer also caches a {dsa_indexer}-dim lightning-indexer "
             "key per token (reported as its own `indexer` group)."
         )
-        if model_type == "deepseek_v32":
+        if model_type == "deepseek_v32" and _expands_v32():
             notes.append(
-                "transformers 5.x caches DeepSeek-V3.2's decompressed per-head K/V (DynamicIndexedLayer), not the "
-                "latent: measured bytes exceed the architectural KV by that engine layout."
+                "transformers before 5.18 caches DeepSeek-V3.2's decompressed per-head K/V (DynamicIndexedLayer), "
+                "not the latent: measured bytes exceed the architectural KV by that engine layout."
             )
     if is_mla and n_heads:
         nope = _int(cfg, "qk_nope_head_dim") or 0

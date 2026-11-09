@@ -5,8 +5,9 @@ Every failure says what is wrong, gives the numbers and says how to fix it.
 ==================  ===============  ==========================================================================
 Check               When             Result when it fails
 ==================  ===============  ==========================================================================
-``architecture``    before download  Blocked: the installed transformers does not know the model type (no
-                                     ``trust_remote_code``, ever)
+``architecture``    before download  Blocked: the installed transformers does not know the model type; a
+                                     checkpoint that ships its own code runs only when you opt in with
+                                     ``trust_remote_code=True`` (then a warning names the files that run)
 ``precision``       before download  Blocked: this device cannot run the checkpoint's published precision
                                      (FP8/FP4 need CUDA), or a precision other than the published one was asked
 ``memory``          before download  Blocked: weights (safetensors metadata) + KV for the conversation set +
@@ -38,7 +39,15 @@ from typing import Any
 from innards._env import budget_bytes
 from innards.features.base import fmt_bytes, text_config
 
-__all__ = ["Check", "Report", "check_loaded", "checkpoint_weights", "published_precision", "validate"]
+__all__ = [
+    "Check",
+    "Report",
+    "check_loaded",
+    "checkpoint_weights",
+    "needs_remote_code",
+    "published_precision",
+    "validate",
+]
 
 log = logging.getLogger("innards.validate")
 
@@ -223,7 +232,32 @@ def _default_device() -> str:
 # --------------------------------------------------------------------------- checks
 
 
-def _check_architecture(config: Mapping[str, Any]) -> Check:
+def _remote_files(config: Mapping[str, Any]) -> list[str]:
+    """The Python files a checkpoint's ``auto_map`` names (``modeling_x.Cls`` -> ``modeling_x.py``)."""
+    auto_map = config.get("auto_map")
+    refs = auto_map.values() if isinstance(auto_map, Mapping) else []
+    files = set()
+    for ref in refs:
+        for one in ref if isinstance(ref, (list, tuple)) else [ref]:
+            if isinstance(one, str) and "." in one:
+                files.add(one.split("--")[-1].rsplit(".", 1)[0] + ".py")
+    return sorted(files)
+
+
+def needs_remote_code(config: Mapping[str, Any]) -> bool:
+    """True when only the checkpoint's own code can build it: transformers here lacks the model type and
+    the config's ``auto_map`` names code. A native architecture never needs it, even with an ``auto_map``
+    (transformers would run the checkpoint's code instead of its own if ``trust_remote_code`` were on)."""
+    if not config.get("auto_map"):
+        return False
+    try:
+        from transformers import CONFIG_MAPPING
+    except ImportError:
+        return True
+    return str(config.get("model_type") or "") not in CONFIG_MAPPING
+
+
+def _check_architecture(config: Mapping[str, Any], trust_remote_code: bool = False) -> Check:
     model_type = str(config.get("model_type") or "")
     try:
         import transformers
@@ -247,14 +281,27 @@ def _check_architecture(config: Mapping[str, Any]) -> Check:
             {"model_type": model_type, "transformers": version},
         )
     if config.get("auto_map"):
+        files = _remote_files(config)
+        numbers = {"model_type": model_type, "transformers": version, "remote_code": files}
+        named = ", ".join(files) or "its own Python files"
+        if trust_remote_code:
+            return Check(
+                "architecture",
+                "Architecture support",
+                "warning",
+                f"transformers {version} doesn't support `{model_type}`; the checkpoint's own code ({named}) runs, "
+                "because trust_remote_code is on.",
+                numbers,
+            )
         return Check(
             "architecture",
             "Architecture support",
             "blocked",
-            f"transformers {version} doesn't support `{model_type}`; the checkpoint ships its own code, and Innards "
-            "never enables trust_remote_code.",
-            {"model_type": model_type, "transformers": version},
-            "Upgrade transformers, or wait for native support.",
+            f"transformers {version} doesn't support `{model_type}`; the checkpoint ships its own code ({named}), "
+            "which runs only when you allow it with trust_remote_code.",
+            numbers,
+            "Read that code, then opt in: innards view --trust-remote-code, or trust_remote_code=True. "
+            "Or upgrade transformers, or wait for native support.",
         )
     return Check(
         "architecture",
@@ -443,6 +490,7 @@ def validate(
     hub: Any = None,
     token: str | bool | None = None,
     check_access: bool = True,
+    trust_remote_code: bool = False,
 ) -> Report:
     """Run every before-download check for ``model`` (a Hub id or a local folder).
 
@@ -454,6 +502,8 @@ def validate(
         kv_tokens: Context to size the KV for when no set is given (default 8,192).
         budget_gb: Memory budget (default ``$INNARDS_GPU_BUDGET_GB`` or 16 GB).
         config / weights_bytes / hub: Supply facts directly (tests, offline use).
+        trust_remote_code: You will load with ``trust_remote_code=True``, so a checkpoint that ships its own
+            code for an architecture transformers does not know is a warning, not blocked.
     """
     from innards.kv import load_config
     from innards.lineage.lineup import model_config
@@ -481,7 +531,7 @@ def validate(
                 return Report(model, device, checks, precision)
             config = pinned
     config = dict(config)
-    checks.append(_check_architecture(config))
+    checks.append(_check_architecture(config, trust_remote_code))
     weights = checkpoint_weights(model, hub=hub, token=token) if weights_bytes is None else (weights_bytes, {})
     if weights is None:  # offline: fall back to the lineup's published size, if it is a lineup model
         from innards.lineage.lineup import lineup

@@ -32,7 +32,7 @@ import contextlib
 import json
 import logging
 import time
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -288,15 +288,42 @@ class ExpertTrace:
             raise RuntimeError("Per-token routing is written to the run folder; this trace has store=False")
         return TokenRouting(folder)
 
+    @property
+    def last_sequence(self) -> int | None:
+        """The sequence id of the most recent recorded forward (``None`` before the first one)."""
+        return self._last[1] if self._last is not None else None
+
     def view(
-        self, host: str = "127.0.0.1", port: int = 8000, *, open_browser: bool = False, block: bool = False
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        *,
+        chat: bool | Mapping[str, Any] = False,
+        topic: str = "chat",
+        open_browser: bool = False,
+        block: bool = False,
     ) -> Any:
-        """Serve the web view over this trace's runs folder (Experts tab). Needs ``innards[view]``."""
+        """Serve the web view over this trace's runs folder. Needs ``innards[view]``.
+
+        ``chat=True`` (or a dict of ``generate()`` arguments, e.g. ``{"max_new_tokens": 256}``) lets the
+        Conversation tab talk to this model: each message runs ``model.generate()`` inside
+        ``trace.topic(...)``, with ``topic`` until the page names another. Without it, the page shows the
+        traces and stored conversations only. Do not run the model from your own code while the page
+        generates a reply.
+        """
         from innards.view import serve
 
+        if self.store is None:
+            raise RuntimeError("The view reads the run folder; this trace has store=False")
+        runner = None
+        if chat:
+            from innards.view.chat import ChatRunner
+
+            runner = ChatRunner(self, generate=chat if isinstance(chat, Mapping) else None, topic=topic)
         self.flush()
-        root = str(self.store.root) if self.store else None
-        return serve(root=root, host=host, port=port, open_browser=open_browser, block=block)
+        return serve(
+            root=str(self.store.root), runner=runner, host=host, port=port, open_browser=open_browser, block=block
+        )
 
     def close(self) -> None:
         """Remove every hook and write what was measured."""

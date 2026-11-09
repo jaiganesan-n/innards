@@ -1,8 +1,10 @@
-"""The web view: a light monitoring dashboard served by the process that runs the model.
+"""The web view: two tabs, Conversation and MoE layers, served from the machine that runs the model.
 
-``watch.view()`` serves it from your script (in a background thread, so a notebook keeps working);
-``innards view [folder]`` serves a folder of runs, or one run folder copied from another machine.
-Needs the ``view`` extra: ``pip install "innards[view]"``.
+Independent use: ``innards view [folder] [--model M]`` loads an MoE checkpoint you pick on the page (or
+with ``--model``), so you can chat with it and see its experts. Package use: ``trace.view(chat=True)``
+serves it from the script that loaded and traced the model (in a background thread, so a notebook keeps
+working). Either way the MoE layers tab also shows every trace in the folder of runs. Needs the ``view``
+extra: ``pip install "innards[view]"`` (and ``hf`` to load or run a model).
 """
 
 from __future__ import annotations
@@ -63,7 +65,6 @@ class ViewServer:
 def serve(
     root: str | None = None,
     *,
-    watch: Any = None,
     runner: Runner | None = None,
     host: str = "127.0.0.1",
     port: int = 8000,
@@ -72,8 +73,10 @@ def serve(
     block: bool = False,
     log_level: str = "warning",
 ) -> ViewServer:
-    """Serve the view over the runs in ``root`` (default ``$INNARDS_RUNS`` or ``./innards_runs``).
+    """Serve the view over the traces in ``root`` (default ``$INNARDS_RUNS`` or ``./innards_runs``).
 
+    ``runner`` lets the Conversation tab send messages: ``trace.view(chat=True)`` passes a
+    :class:`~innards.view.chat.ChatRunner`, ``innards view`` a :class:`~innards.view.loader.ModelRunner`.
     ``block=False`` runs the server in a background thread and returns at once; ``block=True`` (the CLI)
     serves until interrupted.
     """
@@ -86,7 +89,7 @@ def serve(
     from innards.store import RunStore
 
     store = RunStore(root)
-    app = create_app(store, watch=watch, runner=runner, token=token)
+    app = create_app(store, runner=runner, token=token)
     chosen = _free_port(host, port) if not block else port
     shown = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
     url = f"http://{shown}:{chosen}/"

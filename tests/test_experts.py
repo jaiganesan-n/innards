@@ -354,3 +354,44 @@ def test_lift_is_none_without_other_topics() -> None:
     experts = ExpertMap({**synthetic().data, "topics": ["math"], "tokens": [[100]], "counts": [[[90, 80, 20, 10]]]})
     assert experts.lift("math") == [[None, None, None, None]]
     assert experts.specialists("math") == []
+
+
+@pytest.mark.hf
+def test_token_routing_reads_sequences_split_across_shards(tmp_path: Path) -> None:
+    """Rows of one sequence spread over several shards read back exactly as a full read of every shard."""
+    import torch
+    from safetensors.torch import load_file
+
+    import innards
+    from innards.experts import TokenRouting
+
+    model, tok = moe_replica("qwen3_moe"), tokenizer()
+    texts = [("a", "red green blue"), ("b", "one two three four"), ("a", "the cache grows")]
+    with innards.experts.trace(model, tok, run="r", root=str(tmp_path), name="q", shard_tokens=5) as trace:
+        for topic, text in texts:
+            with trace.topic(topic), torch.no_grad():
+                model.generate(**tok(text, return_tensors="pt"), max_new_tokens=4, min_new_tokens=4, do_sample=False)
+    folder = tmp_path / "r" / "experts" / "q"
+    routing = TokenRouting(folder)
+    assert len(routing.shards) >= 4
+    keys = ("experts", "weights", "token", "sequence", "position", "topic")
+    full = {k: torch.cat([load_file(str(folder / s))[k] for s in routing.shards]) for k in keys}
+    listed = routing.sequences()
+    assert [(s["sequence"], s["topic"], s["tokens"]) for s in listed] == [(0, "a", 6), (1, "b", 7), (2, "a", 6)]
+    assert [s["sequence"] for s in routing.sequences("a")] == [0, 2]
+    assert routing.sequences("missing") == []
+    for s in listed:
+        got = routing.sequence(s["sequence"])
+        rows = (full["sequence"] == s["sequence"]).nonzero().reshape(-1)
+        rows = rows[torch.argsort(full["position"][rows], stable=True)]
+        assert got["positions"] == full["position"][rows].tolist() == list(range(s["tokens"]))
+        assert got["experts"] == full["experts"][rows].tolist()
+        assert got["weights"] == full["weights"][rows].tolist()
+        assert got["ids"] == full["token"][rows].tolist()
+    for layer in routing.layers:
+        alone = routing.expert(layer, 1, n=50, topic="a")
+        li = routing.layers.index(layer)
+        keep = full["topic"] == 0
+        hits = (full["experts"][keep][:, li, :] == 1).any(-1)
+        assert sum(r["routed"] for r in alone) == int(hits.sum())
+    assert len(routing) == int(full["token"].numel())

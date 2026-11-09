@@ -7,7 +7,7 @@
     # ... your code loads tokenizer + model (original checkpoint) ...
     watch = innards.observe(model, tokenizer, model_id="Qwen/Qwen3.5-0.8B", run="deltanet-study")
     out = model.generate(**inputs, max_new_tokens=256)     # your code, unchanged
-    watch.view()                                           # the web view, on this machine
+    watch.last_turn().record                               # tokens, KV, memory, timing, features
 
 What happens on the generation path, and nothing more:
 
@@ -20,7 +20,7 @@ What happens on the generation path, and nothing more:
   copy them to the CPU without blocking (see :mod:`innards.observer.probes`).
 
 Everything else runs in background threads: the KV prediction and measurement, memory, timing, the
-feature analyzers, writing the run folder and serving the view. Hooks are fail-open: an error is
+feature analyzers and writing the run folder. Hooks are fail-open: an error is
 counted and logged, and generation continues with the output it would have had.
 """
 
@@ -401,7 +401,7 @@ class Watch:
         return self._last_capture
 
     def status(self) -> dict[str, Any]:
-        """Live state for the view: model, current turn, light-tier values, features and probe health."""
+        """Live state: model, current turn, light-tier values, features, probe health and memory."""
         live = self._live
         last = self.records[-1] if self.records else None
         allocated = None
@@ -442,24 +442,6 @@ class Watch:
 
     def _model_info_dict(self) -> dict[str, Any]:
         return asdict(self._model_info)
-
-    def view(
-        self,
-        host: str = "127.0.0.1",
-        port: int = 8000,
-        *,
-        open_browser: bool = False,
-        runner: Any = None,
-        block: bool = False,
-    ) -> Any:
-        """Serve the web view from this process (background thread). Returns the server; ``.url``, ``.stop()``.
-
-        Needs ``pip install "innards[view]"``. Pass ``runner`` to let the page load models and send messages.
-        """
-        from innards.view import serve
-
-        root = str(self.store.root) if self.store else None
-        return serve(root=root, watch=self, runner=runner, host=host, port=port, open_browser=open_browser, block=block)
 
     def sync(self, url: str, client: Any = None) -> Any:
         """Upload this run's folder to S3 (``s3://bucket/prefix``). Needs the ``aws`` extra."""
@@ -878,12 +860,12 @@ def observe(
         sample_every: Record feature probes on the prefill and every Nth decoded token.
         layers: Attach feature probes to these layer indices only.
         budget_gb: Memory budget for capacity and fit (default ``$INNARDS_GPU_BUDGET_GB`` or 16).
-        label / conversation_set / settings: Stored with the conversation (the runner sets them).
+        label / conversation_set / settings: Stored with the conversation.
         store: ``False`` keeps records in memory only (``watch.records``).
         sinks: Extra destinations for each record, e.g. ``["console"]``.
 
     Returns:
-        A :class:`Watch`. ``watch.view()`` serves the web view; ``watch.close()`` removes every hook.
+        A :class:`Watch`. ``watch.last_turn()`` is the latest turn; ``watch.close()`` removes every hook.
     """
     return Watch(
         model,

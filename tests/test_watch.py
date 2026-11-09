@@ -12,6 +12,7 @@ from typing import Any
 
 import pytest
 
+from innards.kv.config import _expands_v32
 from replicas import chat_ids, replica, tokenizer
 
 pytestmark = pytest.mark.hf
@@ -230,7 +231,9 @@ def test_dsa_and_mla_layouts(tmp_path: Path) -> None:
         converse(model, turns=1, watch=watch)
         watch.wait()
         record = watch.records[-1]
-        assert record.features["mla"]["summary"]["layout"] == "expanded"  # transformers decompresses V3.2
+        # transformers before 5.18 caches V3.2's decompressed K/V; 5.18 and later cache the latent
+        expected = "expanded" if _expands_v32() else "latent"
+        assert record.features["mla"]["summary"]["layout"] == expected
         assert record.features["dsa"]["summary"]["indexer_bytes"] == record.kv.by_layer_type["indexer"]
         assert record.kv.by_layer_type["indexer"] == record.kv.predicted_by_layer_type["indexer"]
     finally:
@@ -381,7 +384,7 @@ def test_store_false_keeps_records_in_memory(tmp_path: Path) -> None:
     assert not (tmp_path / "test").exists()
 
 
-def test_status_for_the_view(tmp_path: Path) -> None:
+def test_status(tmp_path: Path) -> None:
     model, watch = watch_on("qwen3_5", tmp_path)
     try:
         converse(model, turns=1, watch=watch)

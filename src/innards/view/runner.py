@@ -1,12 +1,12 @@
-"""What the view needs from a runner: the code that loads models and runs conversations.
+"""What the view needs from a runner: the code that sends the Conversation tab's messages to a model.
 
-Innards never loads or runs a model. The view's Load, Send and Run set controls call a runner that
-the host application provides (``innards-exp serve`` provides one for the lineup's original
-checkpoints). Without a runner the view monitors whatever your own code generates.
+Package use: :class:`innards.view.chat.ChatRunner` (``trace.view(chat=True)``) talks to the model your
+code loaded and traced. Independent use: :class:`innards.view.loader.ModelRunner` (``innards view``) loads
+the MoE checkpoint picked on the page, then talks to it the same way. Without a runner the page shows
+traces and stored conversations only.
 
 A runner streams each turn to the page as server-sent events through a :class:`TurnJob`:
-``start``, then per turn ``turn_start``, ``token`` ..., ``turn`` (the finished record) or ``error``,
-and finally ``end``.
+``start``, ``turn_start``, ``token`` ..., ``turn`` (the finished turn) or ``error``, and finally ``end``.
 """
 
 from __future__ import annotations
@@ -35,12 +35,11 @@ def _sse(event: str, data: Any) -> str:
 
 
 class TurnJob:
-    """One chat turn, or a conversation set's turns, in flight: its events and what has been generated."""
+    """One chat turn in flight: its events and what has been generated."""
 
-    def __init__(self, kind: str, label: str, total: int = 1) -> None:
+    def __init__(self, kind: str, label: str) -> None:
         self.kind = kind
         self.label = label
-        self.total = total
         self.cancel = threading.Event()
         self._events: queue.SimpleQueue[tuple[str, Any] | None] = queue.SimpleQueue()
         self._text: list[str] = []
@@ -51,9 +50,9 @@ class TurnJob:
     def _elapsed_ms(self) -> float:
         return round((time.perf_counter() - self._started) * 1000, 1)
 
-    def turn_start(self, turn: int, message: str, step: int | None = None) -> None:
+    def turn_start(self, turn: int, message: str, topic: str | None = None) -> None:
         self._text = []
-        self._current = {"turn": turn, "message": message, "step": step, "of": self.total}
+        self._current = {"turn": turn, "message": message, "topic": topic}
         self.put("turn_start", self._current)
 
     def token(self, text: str, generated: int | None = None) -> None:
@@ -79,7 +78,7 @@ class TurnJob:
 
     def sse(self, heartbeat_s: float = 10.0) -> Iterator[str]:
         """Server-sent events until the job ends. Comments keep idle connections open during prefill."""
-        yield _sse("start", {"kind": self.kind, "label": self.label, "total": self.total})
+        yield _sse("start", {"kind": self.kind, "label": self.label})
         while True:
             try:
                 item = self._events.get(timeout=heartbeat_s)
@@ -94,59 +93,22 @@ class TurnJob:
 
 @runtime_checkable
 class Runner(Protocol):
-    """Loads original checkpoints and runs conversations with ``innards.observe`` attached."""
+    """Sends the Conversation tab's messages to a traced model and streams the replies."""
 
     name: str
 
-    @property
-    def watch(self) -> Any:
-        """The :class:`~innards.Watch` on the loaded model, or ``None``."""
-        ...
-
     def status(self) -> dict[str, Any]:
-        """``{"state": idle | validating | loading | ready | generating | error, "model", "error", ...}``."""
+        """``{"state": ready | generating | error, "model", "trace": {"run", "name"}, "conversation", ...}``."""
         ...
 
-    def models(self) -> dict[str, Any]:
-        """What the model picker lists: ``{"lineup": [...], "downloaded": [...]}``."""
+    def new_conversation(self) -> dict[str, Any]:
+        """Start a new conversation (an empty history); returns :meth:`status`."""
         ...
 
-    def validate(
-        self, model: str, precision: str | None, conversation_set: str | None, document: str | None = None
-    ) -> dict[str, Any]:
-        """The before-download checks (:func:`innards.validate.validate`) for this machine."""
+    def chat(self, message: str, topic: str | None = None) -> TurnJob:
+        """Send ``message`` as the next user turn, recorded under ``topic``; the reply streams through the job."""
         ...
 
-    def load(
-        self,
-        model: str,
-        precision: str | None,
-        device: str | None,
-        conversation_set: str | None = None,
-        document: str | None = None,
-    ) -> dict[str, Any]:
-        """Validate (sizing the KV for ``conversation_set``), then load in the background.
-
-        Raises :class:`RunnerError` with ``detail={"report": ...}`` when a check blocks.
-        """
-        ...
-
-    def unload(self) -> dict[str, Any]: ...
-
-    def new_conversation(self, conversation_set: str | None = None) -> dict[str, Any]: ...
-
-    def chat(self, message: str) -> TurnJob: ...
-
-    def run_set(
-        self,
-        conversation_set: str,
-        document: str | None = None,
-        document_name: str | None = None,
-        steps: int | None = None,
-    ) -> TurnJob: ...
-
-    def stop(self) -> bool: ...
-
-    def count_tokens(self, text: str) -> int | None:
-        """Tokens ``text`` takes with the loaded model's tokenizer (``None`` without a model)."""
+    def stop(self) -> bool:
+        """Stop the reply being generated (``False`` when none is)."""
         ...

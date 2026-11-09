@@ -1,6 +1,6 @@
 """Command line.
 
-innards view [folder]                         the web view over a folder of runs (or one run folder)
+innards view [folder] [--model M]             chat with an MoE model and see its experts per layer (web view)
 innards validate <model> [--device --set]     the before-download checks for this machine
 innards predict --model <id> --context <n>    KV size from the config, no weights
 innards explain <family | model>              what an architecture changed from its predecessor
@@ -41,9 +41,22 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"innards {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    view = sub.add_parser("view", help="Serve the web view over a folder of runs")
+    view = sub.add_parser(
+        "view", help="Web view: chat with an MoE model (Conversation) and see its experts per layer (MoE layers)"
+    )
     view.add_argument(
         "root", nargs="?", default=None, help="Folder of runs, or one run folder (default ./innards_runs)"
+    )
+    view.add_argument("--model", default=None, help="MoE model to load at start (Hub id or local folder)")
+    view.add_argument("--run", default="chat", help="Run the chat's expert trace goes to (default chat)")
+    view.add_argument("--topic", default="chat", help="Topic of the first turns; change it on the page")
+    view.add_argument("--max-new-tokens", type=int, default=512, help="Longest reply, in tokens (default 512)")
+    view.add_argument("--device", default=None, help="cuda, mps or cpu (default: the best available)")
+    view.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Also load checkpoints that ship their own code for an architecture transformers lacks "
+        "(e.g. facebook/MobileMoE); native architectures always use transformers' code",
     )
     view.add_argument("--host", default="127.0.0.1", help="Address to bind (default 127.0.0.1; use an SSH tunnel)")
     view.add_argument("--port", type=int, default=8000)
@@ -156,9 +169,27 @@ def _cmd_explain(args: argparse.Namespace) -> int:
 
 
 def _cmd_view(args: argparse.Namespace) -> int:
+    from innards.store import RunStore
     from innards.view import serve
+    from innards.view.loader import ModelRunner
 
-    serve(root=args.root, host=args.host, port=args.port, open_browser=args.open, block=True)
+    store = RunStore(args.root)
+    runner = ModelRunner(
+        store.root,
+        store.only or args.run,
+        topic=args.topic,
+        generate={"max_new_tokens": args.max_new_tokens},
+        device=args.device,
+        trust_remote_code=args.trust_remote_code,
+    )
+    if args.model:
+        runner.load(args.model)  # in the background; the page shows it loading
+    try:
+        serve(root=args.root, runner=runner, host=args.host, port=args.port, open_browser=args.open, block=True)
+    except KeyboardInterrupt:
+        pass  # Ctrl-C is how the view stops
+    finally:
+        runner.shutdown()  # writes the loaded model's trace
     return 0
 
 

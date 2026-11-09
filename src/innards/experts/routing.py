@@ -32,8 +32,17 @@ _LAYER = re.compile(r"(?:^|\.)(?:layers|layer|h|blocks|block)\.(\d+)(?:\.|$)")
 _ANY_INDEX = re.compile(r"\.(\d+)(?:\.|$)")
 _ROUTER_ATTRS = ("gate", "router")
 _SHARED_ATTRS = ("shared_experts", "shared_expert", "shared_mlp")
-_EXPERT_KEYS = ("n_routed_experts", "num_experts", "num_local_experts", "moe_num_experts")
-_TOPK_KEYS = ("num_experts_per_tok", "moe_topk", "top_k", "num_selected_experts")
+_EXPERT_KEYS = ("n_routed_experts", "num_experts", "num_local_experts", "moe_num_experts", "moe_num_primary_experts")
+_TOPK_KEYS = (
+    "num_experts_per_tok",
+    "moe_topk",
+    "moe_top_k",
+    "moe_k",
+    "top_k",
+    "num_selected_experts",
+    "experts_per_token",
+    "moe_num_active_primary_experts",
+)
 _SHARED_KEYS = ("n_shared_experts", "num_shared_experts", "moe_num_shared_experts")
 _ROUTING_KEYS = (
     "norm_topk_prob",
@@ -170,7 +179,7 @@ def _count_experts(block: Any, experts: Any, router: Any, cfg: Mapping[str, Any]
     import torch
 
     for owner in (experts, block, router):
-        for attr in ("num_experts", "num_local_experts", "n_routed_experts"):
+        for attr in ("num_experts", "num_local_experts", "n_routed_experts", "num_primary_experts"):
             value = _int(getattr(owner, attr, None))
             if value is not None:
                 return value
@@ -184,7 +193,7 @@ def _count_experts(block: Any, experts: Any, router: Any, cfg: Mapping[str, Any]
 
 def _count_top_k(block: Any, router: Any, cfg: Mapping[str, Any]) -> int | None:
     for owner in (block, router):
-        for attr in ("top_k", "num_experts_per_tok", "topk"):
+        for attr in ("top_k", "num_experts_per_tok", "topk", "experts_per_token", "num_active_primary_experts"):
             value = _int(getattr(owner, attr, None))
             if value is not None:
                 return value

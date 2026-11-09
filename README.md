@@ -18,7 +18,7 @@
   <img alt="Granite 3.1 1B-A400M runs unchanged; Innards reads which experts each token chose in every MoE layer and counts them per topic" src="docs/figures/banner_light.png" width="100%">
 </p>
 
-Measuring and analysis code for one question: **which experts of a Mixture-of-Experts model does a token, a topic or a task actually use, measured while the model runs and without changing what it computes?** Your code loads the original checkpoint and runs it, for inference or for training; Innards attaches read-only hooks to that model and analyzes what they see beside it. For every model, MoE or not, it also records tokens, context, KV cache, memory and timing, and serves a live web view from the same machine. It targets models that run on a 16 GB machine at 16-bit precision or higher, through Hugging Face Transformers 5.
+Measuring and analysis code for one question: **which experts of a Mixture-of-Experts model does a token, a topic or a task actually use, measured while the model runs and without changing what it computes?** Use it as a package (your code loads the original checkpoint and runs it, for inference or for training) or on its own (`innards view` loads an MoE checkpoint and lets you chat with it); either way Innards attaches read-only hooks to the model and analyzes what they see beside it. For every model, MoE or not, it also records tokens, context, KV cache, memory and timing. Its web view, served from the same machine, lets you chat with the model and see which experts each turn activated in every MoE layer. It targets models that run on a 16 GB machine at 16-bit precision or higher, through Hugging Face Transformers 5.
 
 > [!NOTE]
 > **Objective.** I am researching whether the experts that a specialized topic, task or token activates can be taken out of an MoE model and run on their own, as a smaller MoE with the model's own structure, without the full model. That starts with a measurement: which experts every token chose, in every layer, per topic, during inference and training. Innards does that step and exports the expert set a topic needs; building the smaller model is the job of your own code. Innards never removes, merges or edits experts.
@@ -28,7 +28,7 @@ Measuring and analysis code for one question: **which experts of a Mixture-of-Ex
 | [1. What Innards does](#1-what-innards-does) | The parts, install |
 | [2. MoE expert routing](#2-moe-expert-routing) | Trace topics in inference and training, what is measured and derived, any MoE architecture |
 | [3. Observe a model](#3-observe-a-model) | One turn per `generate()`: KV, memory, timing, feature analyzers |
-| [4. The web view](#4-the-web-view) | Conversation, Analysis and Experts tabs |
+| [4. The web view](#4-the-web-view) | Conversation and MoE layers tabs |
 | [5. Where results go](#5-where-results-go) | Run folders, schema 1.0 |
 | [6. Checks, lineup and KV](#6-checks-lineup-and-kv) | Before loading, pairs of models, KV from a config |
 | [Run it](#run-it) | From a clone: setup and tests; repository layout |
@@ -39,12 +39,12 @@ Measuring and analysis code for one question: **which experts of a Mixture-of-Ex
 
 | Part | What it gives you |
 | --- | --- |
-| MoE expert routing | Which experts every token and topic activates, in inference and training, on any MoE architecture (including remote code such as `facebook/MobileMoE`), and the experts a topic needs per layer, ready to export |
+| MoE expert routing | Which experts every token and topic activates, in inference and training, on any MoE architecture (including checkpoints that ship their own code and route inline, the way `facebook/MobileMoE` does), and the experts a topic needs per layer, ready to export |
 | Every model | Tokens, context, KV cache per layer (predicted from the config and measured), memory and timing |
 | Feature analyzers | One per architectural feature (Gated DeltaNet, gated attention, MoE, mHC, CSA/HCA, DSA, MLA), picked from the model's config |
-| Web view | Served from the machine that runs the model: no central site, no API key |
+| Web view | Talk to the traced model and see the experts every turn and topic chose, per MoE layer; served from the machine that runs the model, with no central site and no API key |
 
-Innards never loads or runs a model itself, and its hooks only read. Missing measurements are `null`, never zero, and every value computed from a measurement is labeled as derived.
+Innards loads a model only when you pick one in `innards view`, and runs it only when you send a message from the Conversation tab; its hooks only read. Missing measurements are `null`, never zero, and every value computed from a measurement is labeled as derived.
 
 ### Install
 
@@ -157,9 +157,27 @@ Each MoE layer is read from the first place that carries the model's own routing
 | `router_output` | The router module returns the chosen experts |
 | `topk` | Code that routes inline, such as `facebook/MobileMoE`: the block's own `torch.topk` |
 
-MoE checkpoints that fit 16 GB at bf16: `ibm-granite/granite-3.1-1b-a400m-instruct` (2.7 GB), `facebook/MobileMoE-S-Base` (2.4 GB, remote code), `ibm-granite/granite-swash-3b-a600m` (6 GB), `microsoft/Phi-tiny-MoE-instruct` (7.5 GB), `arcee-ai/Trinity-Nano-Preview` (12.2 GB) and `allenai/OLMoE-1B-7B-0125-Instruct` (13.8 GB, tight).
+MoE checkpoints that run with transformers 5.22.1 on a 16 GB machine, checked 2026-11-05: transformers builds each with its own classes, Innards finds its MoE layers, and each passes the before-download checks. `innards view` lists them, after the checkpoints you have already downloaded. It lists only architectures the installed transformers builds natively, so a checkpoint that runs only with its own code is not listed, even when it is downloaded:
 
-From the command line, `innards experts` lists every trace under `./innards_runs`, and the **Experts** tab of the web view shows a trace live:
+| Checkpoint | Architecture | Experts | MoE layers | Weights | Conversation tab | Released |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ibm-granite/granite-swash-3b-a600m` | `granitemoe_swa` | 48 / top-4 | 28 | 6.0 GB bf16 | text mode | 2026-07-01 |
+| `HuggingFaceTB/nanowhale-100m` | `deepseek_v4` | 4 / top-2 | 8 | 0.4 GB fp32 | chat template | 2026-04-24 |
+| `utter-project/EuroMoE-2.6B-A0.6B-Instruct-2512` | `mixtral` | 64 / top-8 | 24 | 10.4 GB fp32 | chat template | 2025-12-15 |
+| `arcee-ai/Trinity-Nano-Base` | `afmoe` | 128 / top-8 | 54 | 12.2 GB bf16 | chat template | 2025-12-01 |
+| `arcee-ai/Trinity-Nano-Preview` | `afmoe` | 128 / top-8 | 54 | 12.2 GB bf16 | chat template | 2025-12-01 |
+| `ibm-granite/granite-4.0-h-tiny` | `granitemoehybrid` | 64 / top-6 | 40 | 13.9 GB bf16 | chat template | 2025-09-16 |
+| `ibm-granite/granite-4.0-h-tiny-base` | `granitemoehybrid` | 64 / top-6 | 40 | 13.9 GB bf16 | text mode | 2025-09-16 |
+| `microsoft/Phi-tiny-MoE-instruct` | `phimoe` | 16 / top-2 | 32 | 7.5 GB bf16 | chat template | 2025-06-23 |
+| `utter-project/EuroMoE-2.6B-A0.6B-2512` | `mixtral` | 64 / top-8 | 24 | 5.2 GB bf16 | text mode | 2025-06-09 |
+| `ibm-granite/granite-3.1-1b-a400m-base` | `granitemoe` | 32 / top-8 | 24 | 2.7 GB bf16 | text mode | 2024-12-06 |
+| `ibm-granite/granite-3.1-1b-a400m-instruct` | `granitemoe` | 32 / top-8 | 24 | 2.7 GB bf16 | chat template | 2024-12-06 |
+| `ibm-granite/granite-3.1-3b-a800m-base` | `granitemoe` | 40 / top-8 | 32 | 6.6 GB bf16 | text mode | 2024-12-06 |
+| `ibm-granite/granite-3.1-3b-a800m-instruct` | `granitemoe` | 40 / top-8 | 32 | 6.6 GB bf16 | chat template | 2024-12-06 |
+
+These are original releases (no third-party fine-tunes, merges or quantizations). A checkpoint that ships a chat template is talked to through it; one without uses text mode. `allenai/OLMoE-1B-7B-0125-Instruct` (13.8 GB) needs more than 16 GB once the KV cache and headroom are counted. `facebook/MobileMoE` ships code written for transformers 4.57 that stops at its first forward pass on transformers 5. `uv run python scripts/moe_models.py` re-checks the list against the installed transformers, and `--discover` lists new candidates to review.
+
+From the command line, `innards experts` lists every trace under `./innards_runs`, and the **MoE layers** tab of the web view shows a trace live:
 
 <!-- test: cli -->
 ```bash
@@ -214,20 +232,36 @@ watch.close()
 
 ## 4. The web view
 
-`innards view` (or `watch.view()`) serves a monitoring page from the machine that runs the model:
+The view monitors MoE layers only, in two tabs:
 
 | Tab | What it shows |
 | --- | --- |
-| Conversation | Run a conversation set turn by turn, or type your own messages; tokens reused, KV change and speed per reply |
-| Analysis | Each feature at work, KV/context/memory per turn predicted vs measured, and the same set compared with the version before |
-| Experts | Experts per layer for a topic, topics side by side, the experts each topic needs, specialists, each sequence as tokens × experts; downloads the expert set |
+| Conversation | Chat with an MoE model. Each turn runs inside `trace.topic(...)` under the topic you give it, shows the tokens it reused, prefilled and generated, and links to the experts its tokens chose |
+| MoE layers | Experts per layer for a topic, topics side by side, the experts each topic needs, specialists, each sequence or conversation turn as tokens × experts; downloads the expert set |
+
+**On its own**, `innards view` loads the MoE checkpoint you pick on the Conversation tab (checkpoints already in your Hugging Face cache are listed first), or the one given with `--model`. It runs the before-download checks first, then loads the original checkpoint at its published precision on CUDA, MPS or CPU:
 
 <!-- test: text -->
 ```text
-innards view                                   # ./innards_runs on http://127.0.0.1:8000
-innards view ./innards_runs/deltanet-study     # one run folder, e.g. copied from another machine
-ssh -L 8000:127.0.0.1:8000 user@<gpu-host>     # a remote machine's view through a tunnel
+innards view                                                     # pick a model on the page: http://127.0.0.1:8000
+innards view --model ibm-granite/granite-3.1-1b-a400m-instruct   # load one at start
+innards view --trust-remote-code                                 # also models that ship their own code
+innards view ./innards_runs/topic-experts                        # one run folder, e.g. copied from another machine
+ssh -L 8000:127.0.0.1:8000 user@<gpu-host>                       # a remote machine's view through a tunnel
 ```
+
+**As a package**, your code loads the model and serves the same page with `trace.view(chat=True)`; the Conversation tab talks to that model:
+
+<!-- test: text -->
+```text
+trace = innards.experts.trace(model, tokenizer, run="chat")       # the model and tokenizer your code loaded
+server = trace.view(chat={"max_new_tokens": 256}, topic="chat")   # generate() arguments; returns at once
+server.wait()                                                     # serve until Ctrl-C, then trace.close()
+```
+
+Architectures your transformers knows load with its own classes. A checkpoint that ships its own code for an architecture transformers doesn't have yet (`facebook/MobileMoE`, `Tiiny/SmallThinker`) is not listed; type its id, and it loads only when you start the view with `--trust-remote-code`. Read that code first: it runs on your machine. Even then, a checkpoint whose architecture transformers knows natively never runs its own code. Such a model is built by its own code on real tensors, and then every weight is copied from the checkpoint; `from_pretrained` in transformers 5 builds on the meta device, which code written for a checkpoint often can't run on. A tensor the checkpoint lacks stops the load. Code written for an older transformers can still fail: `facebook/MobileMoE`'s published code targets transformers 4.57.6 and stops at its first forward pass on transformers 5. Innards runs a checkpoint's code as published and does not patch it. From your own code, `innards.view.loader.load_with_own_code(model_id, device=...)` loads such a checkpoint the same way.
+
+Either way, the page calls `generate()` only when you send a message, with the model's generation config. An instruct checkpoint is talked to through its chat template. A base checkpoint has none, so the tab switches to text mode: your first message is the start of a text, each later message is added to the text so far exactly as you typed it, and the model continues it. No template is invented. When the cache holds only attention keys and values, the next turn reuses it, so every token goes through the MoE layers once and the conversation is one sequence of the trace. Recurrent or convolution state (Mamba, DeltaNet, conv layers) is never carried over: those turns are prefilled from the start, and the page shows 0 tokens reused. As a package, don't run the model from your own code while the page is generating.
 
 ---
 
@@ -241,6 +275,7 @@ innards_runs/<run>/run.json                                 name, host, environm
 innards_runs/<run>/<conversation>/turns.jsonl               one TurnRecord (schema 1.0) per turn
 innards_runs/<run>/experts/<name>/summary.json              expert trace: topics, tokens and counts per layer
 innards_runs/<run>/experts/<name>/tokens/shard-*.safetensors   per-token experts, weights, positions, topics
+innards_runs/<run>/experts/<name>/conversations.jsonl   the Conversation tab: each turn's topic, text, tokens, sequence
 ```
 
 <!-- test: check-output -->
@@ -318,7 +353,7 @@ git clone https://github.com/jaiganesan-n/innards.git && cd innards
 uv sync --all-extras                                    # Python 3.13, torch, transformers 5, FastAPI, dev tools
 uv run pytest                                           # unit tests, README examples, small real checkpoints
 uv run ruff check && uv run ruff format --check && uv run mypy src
-INNARDS_REMOTE_CODE_TESTS=1 uv run pytest tests/test_experts_models.py -k mobilemoe   # facebook/MobileMoE (remote code)
+INNARDS_REMOTE_CODE_TESTS=1 uv run pytest tests/test_experts_models.py -k mobilemoe   # MobileMoE's own code: xfail on transformers 5
 uv run --with playwright python docs/figures/src/make_banner.py --measure           # re-trace Granite, redraw the banner
 ```
 
@@ -335,18 +370,18 @@ innards/
 │   ├── features/    one analyzer per architectural feature
 │   ├── kv/          KV calculator
 │   ├── lineage/     lineup, pinned configs, architecture families
-│   ├── view/        web view (FastAPI, static page)
+│   ├── view/        web view: Conversation and MoE layers tabs (FastAPI, static page)
 │   ├── schema.py, store.py, sync.py, validate.py, sets.py
 │   └── cli.py       # innards <command>
 ├── tests/           replicas.py (tiny random-weight models), test_*.py
-├── scripts/         overhead_bench.py
+├── scripts/         overhead_bench.py, moe_models.py (re-checks the models innards view offers)
 ├── docs/figures/    banner_light.png, banner_data.json (what the banner shows), src/make_banner.py
 └── .github/workflows/  ci.yml, publish.yml (PyPI on a v* tag)
 ```
 
 ## License
 
-Code: Apache 2.0 (`LICENSE`). Models keep their own terms: Innards never downloads model weights itself (`facebook/MobileMoE` is gated, for non-commercial research only).
+Code: Apache 2.0 (`LICENSE`). Models keep their own terms: Innards downloads weights only when you load a model in `innards view`, through transformers (`facebook/MobileMoE` is gated, for non-commercial research only).
 
 ---
 

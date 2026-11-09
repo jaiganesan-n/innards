@@ -385,7 +385,13 @@ class ExpertMap:
 
 
 class TokenRouting:
-    """Every recorded token's chosen experts, from a trace folder's token shards (needs torch)."""
+    """Every recorded token's chosen experts, from a trace folder's token shards (needs torch).
+
+    Columns are read from the shards when first needed, and one sequence's routing is read from the
+    rows that hold it, so large traces (millions of tokens) stay quick to browse.
+    """
+
+    _KEYS = ("experts", "weights", "token", "sequence", "position", "topic")
 
     def __init__(self, folder: str | Path) -> None:
         self.folder = Path(folder)
@@ -398,65 +404,118 @@ class TokenRouting:
         self.vocab: dict[int, str] = (
             {int(k): v for k, v in json.loads(vocab.read_text(encoding="utf-8")).items()} if vocab.is_file() else {}
         )
-        self._data: dict[str, Any] | None = None
+        self._cols: dict[str, Any] = {}
+        self._bounds: list[int] | None = None  # first row of each shard, then the total
+
+    def _col(self, key: str) -> Any:
+        """One column of every shard, concatenated in recording order."""
+        import torch
+        from safetensors import safe_open
+
+        if key not in self._cols:
+            parts = []
+            for name in self.shards:
+                with safe_open(str(self.folder / name), "pt") as fh:
+                    parts.append(fh.get_tensor(key))
+            if self._bounds is None:
+                self._bounds = [0]
+                for part in parts:
+                    self._bounds.append(self._bounds[-1] + int(part.shape[0]))
+            self._cols[key] = torch.cat(parts) if parts else torch.zeros(0, dtype=torch.long)
+        return self._cols[key]
+
+    def _rows(self, key: str, rows: Any) -> Any:
+        """``key`` at the given rows (ascending), read from just the shards and row ranges that hold them."""
+        import torch
+        from safetensors import safe_open
+
+        if key in self._cols:
+            return self._cols[key][rows]
+        self._col("sequence")  # the shard boundaries
+        bounds = self._bounds or [0]
+        parts = []
+        for i, name in enumerate(self.shards):
+            lo, hi = bounds[i], bounds[i + 1]
+            local = rows[(rows >= lo) & (rows < hi)] - lo
+            if not local.numel():
+                continue
+            first, last = int(local.min()), int(local.max()) + 1
+            with safe_open(str(self.folder / name), "pt") as fh:
+                parts.append(fh.get_slice(key)[first:last][local - first])
+        return torch.cat(parts)
 
     def _all(self) -> dict[str, Any]:
-        import torch
-        from safetensors.torch import load_file
+        return {k: self._col(k) for k in self._KEYS}
 
-        if self._data is None:
-            parts = [load_file(str(self.folder / s)) for s in self.shards]
-            keys = ("experts", "weights", "token", "sequence", "position", "topic")
-            if parts:
-                self._data = {k: torch.cat([p[k] for p in parts]) for k in keys}
-            else:
-                self._data = {k: torch.zeros(0) for k in keys}
-        return self._data
+    def _layer(self, li: int) -> Any:
+        """Every token's chosen experts in one layer (``[n, k]``), without reading the other layers."""
+        import torch
+        from safetensors import safe_open
+
+        if "experts" in self._cols:
+            return self._cols["experts"][:, li, :]
+        key = f"experts@{li}"
+        if key not in self._cols:
+            parts = []
+            for name in self.shards:
+                with safe_open(str(self.folder / name), "pt") as fh:
+                    parts.append(fh.get_slice("experts")[:, li : li + 1, :][:, 0, :])
+            self._cols[key] = torch.cat(parts) if parts else torch.zeros(0, 1, dtype=torch.int16)
+        return self._cols[key]
 
     def text(self, token_id: int) -> str:
         return self.vocab.get(int(token_id), str(int(token_id)))
 
     def __len__(self) -> int:
-        return int(self._all()["token"].numel())
+        return int(self._col("token").numel())
 
     def sequences(self, topic: str | None = None) -> list[dict[str, Any]]:
-        """Recorded sequences: ``{"sequence", "topic", "tokens", "preview"}``, in recording order."""
+        """Recorded sequences: ``{"sequence", "topic", "tokens", "preview"}``, in recording order.
+
+        A sequence's topic is the topic of its first token.
+        """
         import torch
 
-        d = self._all()
-        if not d["sequence"].numel():
+        seq = self._col("sequence")
+        if not seq.numel() or (topic is not None and topic not in self.topics):
             return []
-        ids, counts = torch.unique(d["sequence"], return_counts=True)
+        ids, inverse, counts = torch.unique(seq, return_inverse=True, return_counts=True)
+        position = self._col("position").long()
+        # one sort: rows grouped by sequence, each group in position order (ties keep recording order)
+        order = torch.argsort(inverse * (int(position.max()) + 1) + position, stable=True)
+        starts = (torch.cumsum(counts, 0) - counts).tolist()
+        firsts = self._col("topic")[order[starts]].tolist()
+        tokens = self._col("token")
         out = []
-        for seq, count in zip(ids.tolist(), counts.tolist(), strict=True):
-            rows = (d["sequence"] == seq).nonzero().reshape(-1)
-            label = self.topics[int(d["topic"][rows[0]])] if self.topics else None
+        for k, (sequence, count, first) in enumerate(zip(ids.tolist(), counts.tolist(), firsts, strict=True)):
+            label = self.topics[int(first)] if self.topics else None
             if topic is not None and label != topic:
                 continue
-            order = rows[torch.argsort(d["position"][rows], stable=True)]
-            preview = "".join(self.text(t) for t in d["token"][order[:24]].tolist())
-            out.append({"sequence": seq, "topic": label, "tokens": count, "preview": preview})
+            preview = "".join(map(self.text, tokens[order[starts[k] : starts[k] + min(count, 24)]].tolist()))
+            out.append({"sequence": sequence, "topic": label, "tokens": count, "preview": preview})
         return out
 
     def sequence(self, sequence: int) -> dict[str, Any]:
-        """One sequence in token order: ids, text, and per token ``[layer][slot]`` experts and weights."""
+        """One sequence in token order: ids, text, topics, and per token ``[layer][slot]`` experts and weights."""
         import torch
 
-        d = self._all()
-        rows = (d["sequence"] == sequence).nonzero().reshape(-1)
+        rows = (self._col("sequence") == sequence).nonzero().reshape(-1)
         if not rows.numel():
             raise KeyError(f"No sequence {sequence} in {self.folder}")
-        rows = rows[torch.argsort(d["position"][rows], stable=True)]
-        ids = d["token"][rows].tolist()
-        weights = d["weights"][rows]
+        positions = self._col("position")[rows]
+        order = torch.argsort(positions, stable=True)
+        ids = self._col("token")[rows][order].tolist()
+        weights = self._rows("weights", rows)[order]
+        labels = [self.topics[int(i)] if self.topics else None for i in self._col("topic")[rows][order].tolist()]
         return {
             "sequence": sequence,
-            "topic": self.topics[int(d["topic"][rows[0]])] if self.topics else None,
+            "topic": labels[0],
+            "topics": labels,
             "layers": self.layers,
             "ids": ids,
             "text": [self.text(t) for t in ids],
-            "positions": d["position"][rows].tolist(),
-            "experts": d["experts"][rows].tolist(),
+            "positions": positions[order].tolist(),
+            "experts": self._rows("experts", rows)[order].tolist(),
             "weights": [[[None if math.isnan(v) else v for v in slot] for slot in tok] for tok in weights.tolist()],
         }
 
@@ -470,12 +529,15 @@ class TokenRouting:
         """Where a token goes: per layer, how often each expert was in its top-k (measured counts)."""
         import torch
 
-        d = self._all()
+        column = self._col("token")
         ids = self._ids(token)
-        mask = torch.isin(d["token"], torch.tensor(ids, dtype=d["token"].dtype)) if ids else d["token"] < -1
+        mask = torch.isin(column, torch.tensor(ids, dtype=column.dtype)) if ids else column < -1
         if topic is not None:
-            mask &= d["topic"] == self.topics.index(topic)
-        experts = d["experts"][mask].long()  # [n, layers, k]
+            mask &= self._col("topic") == self.topics.index(topic)
+        rows = mask.nonzero().reshape(-1)
+        experts = (
+            self._rows("experts", rows).long() if rows.numel() else torch.zeros(0, len(self.layers), 1).long()
+        )  # [n, layers, k]
         counts = []
         for li, width in enumerate(self.experts):
             chosen = experts[:, li, :].reshape(-1)
@@ -487,13 +549,13 @@ class TokenRouting:
         """The tokens most often routed to ``expert`` in ``layer``: count, occurrences and their share."""
         import torch
 
-        d = self._all()
         li = self.layers.index(layer)
-        keep = torch.ones_like(d["token"], dtype=torch.bool)
+        column = self._col("token")
+        keep = torch.ones_like(column, dtype=torch.bool)
         if topic is not None:
-            keep &= d["topic"] == self.topics.index(topic)
-        tokens = d["token"][keep].long()
-        hit = (d["experts"][keep][:, li, :] == expert).any(-1)
+            keep &= self._col("topic") == self.topics.index(topic)
+        tokens = column[keep].long()
+        hit = (self._layer(li)[keep] == expert).any(-1)
         if not tokens.numel():
             return []
         size = int(tokens.max()) + 1

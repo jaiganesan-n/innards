@@ -6,7 +6,6 @@ Your code loads the model; Innards watches it::
 
     watch = innards.observe(model, tokenizer, model_id="Qwen/Qwen3.5-0.8B", run="deltanet-study")
     out = model.generate(**inputs, max_new_tokens=256)    # one turn
-    watch.view()                                          # the web view on this machine
 
 Feature analyzers run automatically for the features the model has, and can be called explicitly::
 
@@ -20,6 +19,7 @@ inference and training, and which experts a topic needs::
     with trace.topic("math"):
         model.generate(**inputs, max_new_tokens=64)
     trace.map().select("math", coverage=0.9)
+    trace.view(chat=True)                                 # Conversation and MoE layers tabs on this machine
 """
 
 from importlib.metadata import PackageNotFoundError, version
@@ -73,7 +73,11 @@ def view(
     open_browser: bool = False,
     block: bool = True,
 ) -> object:
-    """Serve the web view over a folder of runs (default ``./innards_runs``). Needs ``innards[view]``."""
+    """Serve the web view over the expert traces in a folder of runs (default ``./innards_runs``).
+
+    Needs ``innards[view]``. To chat with a model on the Conversation tab, run ``innards view`` (it loads
+    the model) or call ``trace.view(chat=True)`` on a model your code traced.
+    """
     from innards.view import serve
 
     return serve(root=root, runner=runner, host=host, port=port, open_browser=open_browser, block=block)

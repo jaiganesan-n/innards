@@ -2,7 +2,8 @@
 
 ``ibm-granite/granite-3.1-1b-a400m-instruct`` (32 experts, top-8, native transformers) runs with the
 network tests. ``facebook/MobileMoE-S-Base`` ships its own modeling code, so it runs only when you
-opt in with ``INNARDS_REMOTE_CODE_TESTS=1`` (it loads with ``trust_remote_code=True`` at a pinned revision).
+opt in with ``INNARDS_REMOTE_CODE_TESTS=1`` (it loads with its own code at a pinned revision). That code
+targets transformers 4.57, so on transformers 5 the test is an expected failure until MobileMoE updates it.
 """
 
 from __future__ import annotations
@@ -71,13 +72,18 @@ def test_granite_moe(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(os.environ.get("INNARDS_REMOTE_CODE_TESTS") != "1", reason="set INNARDS_REMOTE_CODE_TESTS=1")
+@pytest.mark.xfail(
+    raises=TypeError,
+    strict=True,  # passes the day its code runs on transformers 5: then drop this marker
+    reason="MobileMoE's published code targets transformers 4.57.6 (its model card); its forward calls "
+    "create_causal_mask(input_embeds=..., cache_position=...), which transformers 5 does not take",
+)
 def test_mobilemoe_remote_code(tmp_path: Path) -> None:
-    import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoTokenizer
+
+    from innards.view.loader import load_with_own_code
 
     model_id, revision = MOBILEMOE
-    tok = AutoTokenizer.from_pretrained(model_id, revision=revision)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id, revision=revision, trust_remote_code=True, dtype=torch.bfloat16
-    ).eval()
+    tok = AutoTokenizer.from_pretrained(model_id, revision=revision, trust_remote_code=True)
+    model = load_with_own_code(model_id, revision=revision)  # builds and loads; the forward is what fails
     check(model, tok, tmp_path, "topk")

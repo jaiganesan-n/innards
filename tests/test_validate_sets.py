@@ -12,7 +12,7 @@ import pytest
 
 from conftest import load_fixture_config
 from innards.sets import SETS, count_tokens, estimate_tokens, get_set, load_document, long_document
-from innards.validate import check_loaded, checkpoint_weights, published_precision, validate
+from innards.validate import check_loaded, checkpoint_weights, needs_remote_code, published_precision, validate
 
 
 def checkpoint(folder: Path, config: dict[str, Any], tensors: dict[str, tuple[str, list[int]]]) -> Path:
@@ -101,7 +101,14 @@ def test_unknown_architecture_and_remote_code(tmp_path: Path) -> None:
         },
         {"w": ("BF16", [10])},
     )
-    assert "trust_remote_code" in by_id(validate(str(remote), device="cpu"))["architecture"].message
+    refused = by_id(validate(str(remote), device="cpu"))["architecture"]
+    assert refused.status == "blocked"
+    assert "ships its own code (x.py)" in refused.message
+    assert "innards view --trust-remote-code" in (refused.fix or "")
+    allowed = by_id(validate(str(remote), device="cpu", trust_remote_code=True))["architecture"]
+    assert allowed.status == "warning"  # loads, and says whose code runs
+    assert "own code (x.py) runs" in allowed.message
+    assert allowed.numbers["remote_code"] == ["x.py"]
     native = validate(
         "nvidia/x",
         device="cuda",
@@ -110,6 +117,9 @@ def test_unknown_architecture_and_remote_code(tmp_path: Path) -> None:
         check_access=False,
     )
     assert by_id(native)["architecture"].status == "ok"  # nemotron_h is native; its auto_map is not needed
+    assert needs_remote_code({"model_type": "custom_x", "auto_map": {"AutoConfig": "x.Y"}})
+    assert not needs_remote_code(load_fixture_config("nemotron-3-nano-30b-a3b"))  # native wins over its auto_map
+    assert not needs_remote_code({"model_type": "custom_x"})  # no code to run: blocked, not remote
 
 
 @pytest.mark.hf

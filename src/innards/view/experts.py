@@ -1,4 +1,4 @@
-"""The Experts tab, built from an expert trace folder (``<run>/experts/<name>/``).
+"""The MoE layers tab, built from an expert trace folder (``<run>/experts/<name>/``).
 
 Order on the page:
 
@@ -8,12 +8,15 @@ Order on the page:
 4. **Experts a topic needs** per layer for a coverage, and the **overlap** between topics' expert sets.
 5. **Specialists**: experts chosen far more for this topic than for the others.
 
-Per token (needs torch to read the shards): one sequence's tokens x experts in a layer, and the
-tokens one expert takes most.
+Per token (needs torch to read the shards): one sequence's tokens x experts in a layer (or the tokens
+of one conversation turn), and the tokens one expert takes most.
+
+The Conversation tab reads the turns stored next to the trace (``conversations.jsonl``).
 """
 
 from __future__ import annotations
 
+import json
 import statistics
 from pathlib import Path
 from typing import Any
@@ -21,7 +24,7 @@ from typing import Any
 from innards.experts.analysis import ExpertMap, TokenRouting, _descending, load, traces
 from innards.features.base import bars, heatmap, line, section
 
-__all__ = ["expert_tokens", "experts_page", "sequence_section", "trace_list"]
+__all__ = ["conversations", "expert_tokens", "experts_page", "sequence_section", "trace_list"]
 
 _SOURCES = {
     "experts_input": "the experts module's inputs",
@@ -241,11 +244,42 @@ def experts_page(
     return out
 
 
-def sequence_section(folder: Path, sequence: int, layer: int) -> dict[str, Any]:
+def conversations(folder: Path) -> list[dict[str, Any]]:
+    """The Conversation tab's stored turns, grouped by conversation in the order they were held."""
+    from innards.view.chat import CONVERSATIONS
+
+    path = folder / CONVERSATIONS
+    grouped: dict[str, dict[str, Any]] = {}
+    if not path.is_file():
+        return []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        try:
+            turn = json.loads(raw)
+        except json.JSONDecodeError:
+            continue  # a line cut short by a crash; the others still read
+        if not isinstance(turn, dict) or not turn.get("conversation"):
+            continue
+        conv = grouped.setdefault(str(turn["conversation"]), {"id": str(turn["conversation"]), "turns": []})
+        conv["turns"].append(turn)
+    return list(grouped.values())
+
+
+def sequence_section(
+    folder: Path, sequence: int, layer: int, first: int | None = None, last: int | None = None
+) -> dict[str, Any]:
+    """One sequence's tokens x experts in ``layer``; ``first``/``last`` keep positions ``first <= p < last``."""
     routing = TokenRouting(folder)
     data = routing.sequence(sequence)
+    if layer not in data["layers"]:
+        raise KeyError(f"No MoE layer {layer} in this trace")
     li = data["layers"].index(layer)
     width = routing.experts[li]
+    lo, hi = first if first is not None else 0, last if last is not None else 2**62
+    keep = [i for i, p in enumerate(data["positions"]) if lo <= p < hi]
+    if not keep:
+        raise KeyError(f"Sequence {sequence} has no tokens at positions {lo} to {hi - 1}")
+    for key in ("ids", "text", "positions", "experts", "weights", "topics"):
+        data[key] = [data[key][i] for i in keep]
     z: list[list[float | None]] = [[None] * len(data["ids"]) for _ in range(width)]
     for t, (experts, weights) in enumerate(zip(data["experts"], data["weights"], strict=True)):
         chosen = [(e, w) for e, w in zip(experts[li], weights[li], strict=True) if e >= 0]
@@ -253,17 +287,20 @@ def sequence_section(folder: Path, sequence: int, layer: int) -> dict[str, Any]:
         for e, w in chosen:
             z[e][t] = abs(w) / total if w is not None else 1.0 / len(chosen)
     words = [t.replace("\n", "↵") or "·" for t in data["text"]]
+    sliced = first is not None or last is not None
+    span = f", positions {data['positions'][0]} to {data['positions'][-1]}" if sliced else ""
+    topics = " + ".join(dict.fromkeys(str(t) for t in data["topics"]))
     return section(
         "experts-sequence",
         f"Tokens and their experts: layer {layer}",
-        f"{data['topic']} · {len(words)} tokens",
+        f"{topics} · {len(words)} tokens{span}",
         [
             f"Each column is one token; colored cells are the experts its top-k chose in layer {layer}, shaded by "
             "the share of the token's routing weight (measured).",
         ],
         [
             heatmap(
-                f"Sequence {sequence}, layer {layer}",
+                f"Sequence {sequence}{span}, layer {layer}",
                 words,
                 list(range(width)),
                 z,
